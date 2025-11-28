@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Save } from 'lucide-react';
 
-export default function DemoCaseModal({ isOpen, onClose, demoCase }) {
+export default function DemoCaseModal({ isOpen, onClose, demoCase, onSuccess }) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     case_name: '',
@@ -74,6 +74,62 @@ export default function DemoCaseModal({ isOpen, onClose, demoCase }) {
     } catch (err) {
       console.error(err);
       alert(`Error saving demo case: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!demoCase) return;
+    
+    if (!confirm(`Are you sure you want to delete "${demoCase.case_name}"? This will unlink all products from this case but won't delete the products themselves.`)) {
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      // Check if any products in this case are on loan
+      const allProducts = await base44.entities.Product.list('article_reference', 500);
+      const caseProducts = allProducts.filter(p => p.demo_case_id === demoCase.id);
+      
+      const productIds = caseProducts.map(p => p.id);
+      if (productIds.length > 0) {
+        const allLoans = await base44.entities.Loan.list('created_date', 500);
+        const activeLoans = allLoans.filter(l => 
+          productIds.includes(l.product_id) && 
+          (l.status === 'out' || l.status === 'sample')
+        );
+        
+        if (activeLoans.length > 0) {
+          alert('Cannot delete demo case: some products in this case are currently on loan.');
+          setLoading(false);
+          return;
+        }
+      }
+      
+      // Unlink products from this case
+      for (const product of caseProducts) {
+        await base44.entities.Product.update(product.id, {
+          demo_case_id: null,
+          belongs_to_case: false
+        });
+      }
+      
+      // Delete the demo case
+      await base44.entities.DemoCase.delete(demoCase.id);
+      
+      base44.entities.ActivityLog.create({
+        action: 'Delete Demo Case',
+        details: `Deleted ${demoCase.case_name}`,
+        user_email: (await base44.auth.me())?.email || 'system',
+        entity_type: 'DemoCase'
+      }).catch(console.error);
+      
+      if (onSuccess) onSuccess();
+      onClose();
+    } catch (err) {
+      console.error("Error deleting demo case:", err);
+      alert(`Error deleting demo case: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -164,16 +220,31 @@ export default function DemoCaseModal({ isOpen, onClose, demoCase }) {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button 
-            onClick={handleSubmit} 
-            disabled={loading || !formData.case_name}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            <Save className="w-4 h-4 mr-2" /> 
-            {demoCase ? 'Update Case' : 'Create Case'}
-          </Button>
+          <div className="flex w-full justify-between">
+            {demoCase && (
+              <Button 
+                variant="destructive" 
+                onClick={handleDelete}
+                disabled={loading}
+                className="mr-auto"
+              >
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Delete Case
+              </Button>
+            )}
+            <div className="flex gap-2 ml-auto">
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button 
+                onClick={handleSubmit} 
+                disabled={loading || !formData.case_name}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Save className="w-4 h-4 mr-2" /> 
+                {demoCase ? 'Update Case' : 'Create Case'}
+              </Button>
+            </div>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Save } from 'lucide-react';
+import { Loader2, Save, Trash2 } from 'lucide-react';
 
 export default function ProductModal({ isOpen, onClose, product, onSuccess }) {
   const [loading, setLoading] = useState(false);
@@ -124,6 +124,47 @@ export default function ProductModal({ isOpen, onClose, product, onSuccess }) {
     }
   };
 
+  const handleDelete = async () => {
+    if (!product) return;
+    
+    if (!confirm(`Are you sure you want to delete "${product.article_reference}"? This action cannot be undone.`)) {
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      // Check if product has active loans
+      const allLoans = await base44.entities.Loan.list('created_date', 500);
+      const activeLoans = allLoans.filter(l => 
+        l.product_id === product.id && 
+        (l.status === 'out' || l.status === 'sample')
+      );
+      
+      if (activeLoans.length > 0) {
+        alert('Cannot delete product: it is currently on loan.');
+        setLoading(false);
+        return;
+      }
+      
+      await base44.entities.Product.delete(product.id);
+      
+      base44.entities.ActivityLog.create({
+        action: 'Delete Product',
+        details: `Deleted ${product.article_reference}`,
+        user_email: (await base44.auth.me())?.email || 'system',
+        entity_type: 'Product'
+      }).catch(console.error);
+      
+      if (onSuccess) onSuccess();
+      onClose();
+    } catch (err) {
+      console.error("Error deleting product:", err);
+      alert(`Error deleting product: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
@@ -236,16 +277,31 @@ export default function ProductModal({ isOpen, onClose, product, onSuccess }) {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button 
-            onClick={handleSubmit} 
-            disabled={loading || !formData.article_reference || !formData.brand}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            <Save className="w-4 h-4 mr-2" /> 
-            {product ? 'Update Product' : 'Add Product'}
-          </Button>
+          <div className="flex w-full justify-between">
+            {product && (
+              <Button 
+                variant="destructive" 
+                onClick={handleDelete}
+                disabled={loading}
+                className="mr-auto"
+              >
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Delete Product
+              </Button>
+            )}
+            <div className="flex gap-2 ml-auto">
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button 
+                onClick={handleSubmit} 
+                disabled={loading || !formData.article_reference || !formData.brand}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Save className="w-4 h-4 mr-2" /> 
+                {product ? 'Update Product' : 'Add Product'}
+              </Button>
+            </div>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

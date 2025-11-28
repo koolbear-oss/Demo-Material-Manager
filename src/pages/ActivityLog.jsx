@@ -16,10 +16,7 @@ export default function ActivityLog() {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const res = await base44.entities.ActivityLog.list({
-        sort: { created_date: -1 },
-        limit: 100
-      });
+      const res = await base44.entities.ActivityLog.list('created_date', 100);
       setLogs(res);
     } catch (e) {
       console.error(e);
