@@ -14,7 +14,8 @@ import {
   ChevronRight,
   Box,
   RotateCcw,
-  Users
+  Users,
+  ArrowDownRight
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -217,21 +218,85 @@ export default function Dashboard() {
     }
   };
 
+  // --- Enhanced Product Availability with Item Tracking ---
+  
+  const getEnhancedAvailability = (product) => {
+    // For individual items, use normal calculation
+    if (product.is_individual_item) {
+      const activeLoansCount = loans.filter(l => l.product_id === product.id).length;
+      const available = product.quantity - activeLoansCount;
+      return { available, total: product.quantity };
+    }
+    
+    // For parent articles, check if they have individual items
+    const childItems = products.filter(p => p.parent_article_id === product.id && p.is_individual_item);
+    
+    if (childItems.length > 0) {
+      // Calculate aggregate from child items
+      let totalAvailable = 0;
+      let totalQuantity = childItems.length;
+      
+      childItems.forEach(item => {
+        const itemLoans = loans.filter(l => l.product_id === item.id).length;
+        const itemAvailable = item.quantity - itemLoans;
+        totalAvailable += itemAvailable;
+      });
+      
+      return { 
+        available: totalAvailable, 
+        total: totalQuantity, 
+        hasIndividualItems: true, 
+        childItems: childItems.map(item => ({
+          ...item,
+          availability: {
+            available: item.quantity - loans.filter(l => l.product_id === item.id).length,
+            total: item.quantity
+          }
+        }))
+      };
+    }
+    
+    // Regular article-level calculation
+    const activeLoansCount = loans.filter(l => l.product_id === product.id).length;
+    const available = product.quantity - activeLoansCount;
+    return { available, total: product.quantity };
+  };
+
+  // Filter display products (hide parent articles with quantity=0 and individual items)
+  const getDisplayProducts = (productList) => {
+    return productList.filter(product => {
+      // Hide parent articles with quantity=0 that have individual items
+      if (!product.is_individual_item && product.quantity === 0) {
+        const hasChildItems = products.some(p => p.parent_article_id === product.id && p.is_individual_item);
+        if (hasChildItems) return false;
+      }
+      
+      // Hide individual items from main list (they'll be shown in drill-down)
+      if (product.is_individual_item) return false;
+      
+      return true;
+    });
+  };
+
   // --- Derived Data Calculations ---
 
-  // Calculate availability per product (consistent with other pages)
-  const productAvailability = products.map(p => {
-    const activeLoansCount = loans.filter(l => l.product_id === p.id && l.status === 'out').length;
-    const sampleCount = loans.filter(l => l.product_id === p.id && l.status === 'sample').length;
-    const available = p.quantity - activeLoansCount - sampleCount;
-    return { ...p, available, activeLoansCount, sampleCount };
+  // Calculate availability per product using enhanced method
+  const productAvailability = getDisplayProducts(products).map(p => {
+    const enhanced = getEnhancedAvailability(p);
+    return { 
+      ...p, 
+      available: enhanced.available, 
+      total: enhanced.total,
+      hasIndividualItems: enhanced.hasIndividualItems,
+      childItems: enhanced.childItems
+    };
   });
 
   // Stats
-  const totalItems = products.reduce((acc, p) => acc + (p.quantity || 0), 0);
+  const totalItems = productAvailability.reduce((acc, p) => acc + (p.total || 0), 0);
   const totalOut = loans.filter(l => l.status === 'out').length;
   const totalSamples = loans.filter(l => l.status === 'sample').length;
-  const totalAvailable = totalItems - totalOut - totalSamples;
+  const totalAvailable = productAvailability.reduce((acc, p) => acc + (p.available || 0), 0);
   
   const overdueLoans = loans.filter(l => 
     l.status === 'out' && 
@@ -243,8 +308,7 @@ export default function Dashboard() {
   const filteredProducts = productAvailability.filter(p => 
     p.article_reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (p.kit_name && p.kit_name.toLowerCase().includes(searchTerm.toLowerCase()))
+    p.brand.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const myLoans = loans.filter(l => l.responsible_email === currentUser?.email);
@@ -523,6 +587,11 @@ export default function Dashboard() {
                                 {demoCase.case_name}
                               </Badge>
                             )}
+                            {product.hasIndividualItems && (
+                              <Badge variant="outline" className="text-[10px] px-1 py-0">
+                                {product.childItems.length} items
+                              </Badge>
+                            )}
                           </div>
                           <p className="text-sm text-gray-500">{product.description}</p>
                         </div>
@@ -530,7 +599,7 @@ export default function Dashboard() {
                         <div className="flex items-center gap-6">
                           <div className="text-right">
                             <div className={`text-lg font-bold ${product.available > 0 ? 'text-green-600' : 'text-red-500'}`}>
-                              {product.available} <span className="text-xs font-normal text-gray-400">/ {product.quantity}</span>
+                              {product.available} <span className="text-xs font-normal text-gray-400">/ {product.total}</span>
                             </div>
                             <div className="text-xs text-gray-400">Available</div>
                           </div>
